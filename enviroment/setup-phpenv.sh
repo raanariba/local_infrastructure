@@ -6,6 +6,7 @@ PHPENV_ROOT="${ROOT_DIR}/enviroment/phpenv"
 PHP_VERSION="8.3.6"
 PHP_INSTALL_DIR="${PHPENV_ROOT}/versions/${PHP_VERSION}"
 PHP_BACKUP_DIR=''
+PHP_BUILD_JOBS="${PHP_BUILD_JOBS:-2}"
 PHPENV_REPOSITORY="https://github.com/phpenv/phpenv.git"
 PHP_BUILD_REPOSITORY="https://github.com/php-build/php-build.git"
 
@@ -37,27 +38,39 @@ restore_previous_php() {
 }
 
 select_build_image() {
+  local host_libc
+  local libc_major
+  local libc_minor
+
   [ -r /etc/os-release ] || die "Cannot determine the host distribution."
   . /etc/os-release
 
   case "${ID:-}" in
-    ubuntu)
-      # Ubuntu point releases share the same base image tag (for example 24.04).
-      if [[ "${VERSION_ID}" =~ ^([0-9]+)\.([0-9]+) ]]; then
-        BASE_IMAGE="ubuntu:${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-      else
-        die "Cannot determine the Ubuntu base image tag from VERSION_ID=${VERSION_ID}."
-      fi
-      ;;
-    debian)
-      BASE_IMAGE="debian:${VERSION_ID}"
-      ;;
+    ubuntu|debian) ;;
     *)
       die "Automatic PHP builds support Debian and Ubuntu only."
       ;;
   esac
 
-  BUILD_IMAGE_TAG="local-phpenv-build:${ID}-${VERSION_ID//./-}"
+  host_libc="$(getconf GNU_LIBC_VERSION)" || die "Cannot determine the host glibc version."
+  if [[ "${host_libc}" =~ ^glibc\ ([0-9]+)\.([0-9]+) ]]; then
+    libc_major="${BASH_REMATCH[1]}"
+    libc_minor="${BASH_REMATCH[2]}"
+  else
+    die "The isolated PHP runtime requires glibc 2.35 or newer; found ${host_libc}."
+  fi
+  if (( libc_major < 2 || (libc_major == 2 && libc_minor < 35) )); then
+    die "The controlled PHP build requires glibc 2.35 or newer (Ubuntu 22.04+ or Debian 12+); found ${host_libc}."
+  fi
+
+  case "$(uname -m)" in
+    x86_64) BUILD_PLATFORM='linux/amd64' ;;
+    aarch64) BUILD_PLATFORM='linux/arm64' ;;
+    *) die "The controlled PHP build supports x86_64 and aarch64 only." ;;
+  esac
+
+  [[ "${PHP_BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]] || die "PHP_BUILD_JOBS must be a positive integer."
+  BUILD_IMAGE_TAG="local-phpenv-build:php-${PHP_VERSION}-ubuntu-22.04-${BUILD_PLATFORM##*/}"
 }
 
 select_docker_command() {
@@ -76,11 +89,46 @@ ensure_build_image() {
   fi
 
   "${DOCKER_COMMAND[@]}" build \
-    --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+    --platform "${BUILD_PLATFORM}" \
     -t "${BUILD_IMAGE_TAG}" \
     -f "${ROOT_DIR}/enviroment/php-build.Dockerfile" \
     "${ROOT_DIR}/enviroment"
   BUILD_IMAGE_READY=1
+}
+
+build_php_runtime() {
+  local log_dir
+  local log_file
+  local status=0
+
+  mkdir -p "${PHPENV_ROOT}/logs"
+  log_dir="$(mktemp -d "${PHPENV_ROOT}/logs/php-${PHP_VERSION}.XXXXXX")"
+  printf 'Building PHP %s with %s parallel job(s)\n' "${PHP_VERSION}" "${PHP_BUILD_JOBS}"
+  printf 'Persistent build logs: %s\n' "${log_dir}"
+
+  "${DOCKER_COMMAND[@]}" run --rm \
+    --platform "${BUILD_PLATFORM}" \
+    --user "$(id -u):$(id -g)" \
+    --env "HOME=/tmp" \
+    --env "TMPDIR=/build-logs" \
+    --env "PHP_BUILD_TMPDIR=/tmp" \
+    --env "PHP_BUILD_EXTRA_MAKE_ARGUMENTS=-j${PHP_BUILD_JOBS}" \
+    --env "PHPENV_ROOT=${PHPENV_ROOT}" \
+    --env "PHPENV_VERSION=${PHP_VERSION}" \
+    --volume "${ROOT_DIR}:${ROOT_DIR}" \
+    --volume "${log_dir}:/build-logs" \
+    --workdir "${ROOT_DIR}" \
+    "${BUILD_IMAGE_TAG}" \
+    bash "${ROOT_DIR}/enviroment/build-php.sh" 2>&1 | tee "${log_dir}/build.log" || status=$?
+
+  if [ "${status}" -ne 0 ]; then
+    printf 'PHP compilation failed. Full logs were preserved at %s\n' "${log_dir}" >&2
+    for log_file in "${log_dir}"/php-build.*.log; do
+      [ -f "${log_file}" ] || continue
+      grep -n -m 3 -B 3 -A 5 -E '(^|[[:space:]])(fatal )?error:|Killed signal|out of memory' "${log_file}" >&2 || true
+    done
+    return "${status}"
+  fi
 }
 
 install_missing_runtime_libraries() {
@@ -100,6 +148,7 @@ install_missing_runtime_libraries() {
     printf 'Copying missing PHP runtime libraries into %s\n' "${PHPENV_ROOT}/lib"
     ensure_build_image
     "${DOCKER_COMMAND[@]}" run --rm \
+      --platform "${BUILD_PLATFORM}" \
       --user "$(id -u):$(id -g)" \
       --env "PHPENV_ROOT=${PHPENV_ROOT}" \
       --env "MISSING_LIBRARIES=${missing_libraries}" \
@@ -142,16 +191,7 @@ if ! bash "${ROOT_DIR}/enviroment/check-phpenv.sh" >/dev/null 2>&1; then
     printf 'Previous PHP installation backed up to %s\n' "${PHP_BACKUP_DIR}/previous"
   fi
 
-  printf 'Building PHP %s in %s\n' "${PHP_VERSION}" "${PHPENV_ROOT}"
-  "${DOCKER_COMMAND[@]}" run --rm \
-    --user "$(id -u):$(id -g)" \
-    --env "HOME=/tmp" \
-    --env "PHPENV_ROOT=${PHPENV_ROOT}" \
-    --env "PHPENV_VERSION=${PHP_VERSION}" \
-    --volume "${ROOT_DIR}:${ROOT_DIR}" \
-    --workdir "${ROOT_DIR}" \
-    "${BUILD_IMAGE_TAG}" \
-    "${PHPENV_ROOT}/bin/phpenv" install "${PHP_VERSION}"
+  build_php_runtime
 fi
 
 install_missing_runtime_libraries

@@ -39,11 +39,11 @@ The root Compose configuration runs only shared backing services. Application co
 
 - WSL or Linux with Bash
 - `sudo` access and internet connectivity for an initial automatic installation
-- Debian or Ubuntu to build PHP 8.3.6 with a matching distribution image
+- Ubuntu 22.04+ or Debian 12+, with glibc 2.35+ and x86_64 or aarch64 architecture, for this branch's isolated PHP runtime
 
 The same `setup-local.sh` workflow runs in WSL and Linux. On Debian or Ubuntu, it installs missing Git, Docker Engine, and the Docker Compose plugin, then starts Docker Engine. If the tools already exist, it validates them without reinstalling anything.
 
-On this branch, automatic PHP builds require Debian or Ubuntu. On other distributions, setup exits with a clear message before downloading phpenv.
+On this branch, PHP is built with a fixed `ubuntu:22.04` base, not the workstation's release. Setup checks the distribution, glibc, and architecture before downloading phpenv and exits with a clear message when they are incompatible. This prevents newer workstations from introducing libraries or compilers incompatible with PHP 8.3.6.
 
 On Windows, install a Debian or Ubuntu WSL distribution first and run setup inside it. The script installs Docker Engine in that distribution if needed; it does not use a Windows-hosted container runtime. This branch also prepares PHP 8.3.6 with phpenv under `enviroment/phpenv/`; it does not install application dependencies or frameworks.
 
@@ -69,6 +69,7 @@ local-infrastructure/
 │   └── timezone-handling.md
 ├── enviroment/
 │   ├── activate.sh
+│   ├── build-php.sh
 │   ├── check-phpenv.sh
 │   ├── copy-runtime-libraries.sh
 │   ├── php-build.Dockerfile
@@ -120,7 +121,9 @@ Each repository is cloned to `repositorios/<name>`. The script does not install 
 
 ### PHP 8.3.6 on this branch
 
-`setup-local.sh` installs phpenv, php-build, and PHP 8.3.6 under `enviroment/phpenv/`. Git ignores that directory. On Debian or Ubuntu it builds PHP in a temporary container with the development packages and copies any missing runtime libraries into the local environment; it does not replace system PHP, install those packages on the host, or modify global Bash startup files. The first build can take several minutes.
+`setup-local.sh` installs phpenv, php-build, and PHP 8.3.6 under `enviroment/phpenv/`. Git ignores that directory. It builds PHP in a temporary `ubuntu:22.04`-based container for the workstation's architecture and copies any missing runtime libraries into the local environment; it does not replace system PHP, install development packages on the host, or modify global Bash startup files. The first build can take several minutes. The build context excludes runtimes, logs, and other local files under `enviroment/`.
+
+Builds use two parallel jobs by default. On a workstation with limited memory, use `PHP_BUILD_JOBS=1 bash ./setup-local.sh` or `PHP_BUILD_JOBS=1 bash ./update-local.sh`. Complete logs are retained under `enviroment/phpenv/logs/php-8.3.6.*/`, even after the container is removed. `build.log` contains the output and compiler, libxml2, and OpenSSL versions; `php-build.*.log` files retain compiler diagnostics. On failure, the script prints the local directory and the first matching errors. Review these logs before sharing them.
 
 Activate this branch's version explicitly in a terminal:
 
@@ -303,11 +306,11 @@ The script fetches remote updates and fast-forwards repositories with a configur
 
 If you use optional services, repeat their flags when updating: `bash ./update-local.sh --with-mysql --with-postgres --with-redis`. Use `--skip-services` to update repositories without starting services. Unless services are skipped, the update needs the infrastructure `.env` created by `setup-local.sh`.
 
-On this branch, it first checks that the isolated PHP under `enviroment/phpenv/` runs and is exactly 8.3.6. If it is missing, cannot run, or has the wrong version, it attempts to install or rebuild it through `enviroment/setup-phpenv.sh`, then checks it again before updating repositories or services. A valid installation is not reinstalled. Repair requires Git, accessible Docker Engine, and Debian or Ubuntu, even with `--skip-services`; it can take several minutes.
+On this branch, it first checks that the isolated PHP under `enviroment/phpenv/` runs and is exactly 8.3.6. If it is missing, cannot run, or has the wrong version, it attempts to install or rebuild it through `enviroment/setup-phpenv.sh`, then checks it again before updating repositories or services. A valid installation is not reinstalled. Repair requires Git, accessible Docker Engine, and a system compatible with the PHP requirements above, even with `--skip-services`; it can take several minutes.
 
 Before replacing an existing installation, it preserves a backup under `enviroment/phpenv/.php-8.3.6-backup.*/previous`. If repair fails, it attempts to restore that backup and stops the update; any failed installation is retained in the same backup directory. On success, the previous backup is retained as well. It does not modify system PHP or other phpenv versions, nor install application dependencies. The required version remains 8.3.6; application repositories must retain compatible requirements. `--force` still affects only repository synchronization and is not needed to repair PHP.
 
-On a new workstation, clone this branch and run `bash ./setup-local.sh` first to prepare the prerequisites and local environment. Use `bash ./update-local.sh` for subsequent updates. Do not copy `.env` or `enviroment/phpenv/` from another machine: credentials are generated locally and PHP is built for the target distribution.
+On a new workstation, clone this branch and run `bash ./setup-local.sh` first to prepare the prerequisites and local environment. Use `bash ./update-local.sh` for subsequent updates. Do not copy `.env` or `enviroment/phpenv/` from another machine: credentials are generated locally and PHP is built for the target architecture using the controlled base.
 
 Use `--force` only when local changes may be discarded. It resets affected repositories to their upstream branch and removes untracked files:
 
@@ -411,6 +414,7 @@ Attach the application service to that network. It can then resolve the shared s
 | Automatic provisioning is unavailable | Use Debian or Ubuntu, or install Git, Docker Engine, Docker Compose v2, `od`, and `tr` before running setup on another Linux distribution. |
 | A service cannot bind its port | Change the corresponding port variable in `.env`, then run `docker compose up -d`. |
 | Compose reports a missing environment variable | Run `bash ./setup-local.sh` to create `.env`, or restore the required local value without committing it. |
+| PHP compilation or repair fails | Inspect the `enviroment/phpenv/logs/php-8.3.6.*` directory printed by the script, especially `build.log` and `php-build.*.log`. Confirm glibc 2.35+ and a supported architecture. With limited memory, retry PHP only using `PHP_BUILD_JOBS=1 bash ./enviroment/setup-phpenv.sh`; this requires Git and Docker and does not update repositories or start services. Do not uninstall system PHP. |
 | MinIO does not start or become healthy | Check `docker compose ps minio` and `docker compose logs minio`. Confirm the image is `cgr.dev/chainguard/minio:latest`; rerun `bash ./setup-local.sh` or `bash ./update-local.sh` to apply the current configuration without deleting `minio_data`. |
 | Mongo Express waits for MongoDB | Run `docker compose ps` and wait until MongoDB is healthy. Inspect `docker compose logs mongo` if it does not become healthy. |
 | MySQL refuses connections | Start with both Compose files, check health with `docker compose -f docker-compose.yml -f docker-compose.mysql.yml ps`, and verify the `.env` port is free. Do not change credentials without resetting the MySQL volume too. |

@@ -20,9 +20,21 @@ Clone cada aplicación en `repositorios/<nombre>` según su propia documentació
 
 `bash ./update-local.sh` comprueba primero el ejecutable de PHP aislado y su versión exacta, 8.3.6. Si la comprobación falla, reutiliza `enviroment/setup-phpenv.sh` para instalarlo o reconstruirlo, y solo continúa con los repositorios y servicios después de validarlo de nuevo. No reinstala una versión correcta ni cambia el PHP del sistema u otras versiones de phpenv.
 
-La reparación necesita Git, Docker Engine accesible y Debian o Ubuntu; `--skip-services` omite el inicio de servicios, no esta comprobación ni la reparación. Antes de sustituir una instalación existente, la mueve a `enviroment/phpenv/.php-8.3.6-backup.*/previous`. Conserva ese respaldo después de una reparación correcta. Si falla, intenta restaurarlo, conserva la instalación fallida en ese mismo directorio de respaldo cuando exista y detiene la actualización antes de modificar repositorios o servicios. No use `--force` para reparar PHP: esa opción descarta cambios de los repositorios.
+La reparación necesita Git, Docker Engine accesible y Ubuntu 22.04+ o Debian 12+, con glibc 2.35+ y arquitectura x86_64 o aarch64; `--skip-services` omite el inicio de servicios, no esta comprobación ni la reparación. Antes de sustituir una instalación existente, la mueve a `enviroment/phpenv/.php-8.3.6-backup.*/previous`. Conserva ese respaldo después de una reparación correcta. Si falla, intenta restaurarlo, conserva la instalación fallida en ese mismo directorio de respaldo cuando exista y detiene la actualización antes de modificar repositorios o servicios. No use `--force` para reparar PHP: esa opción descarta cambios de los repositorios.
 
-En otra estación de trabajo, clone esta rama y ejecute primero `bash ./setup-local.sh`; después use `bash ./update-local.sh`. No traslade `.env` ni `enviroment/phpenv/` entre máquinas. El setup genera credenciales nuevas y compila PHP para la distribución de destino. La reparación puede instalar PHP y phpenv si faltan, pero el actualizador no sustituye la preparación inicial de Git, Docker y los servicios.
+En otra estación de trabajo, clone esta rama y ejecute primero `bash ./setup-local.sh`; después use `bash ./update-local.sh`. No traslade `.env` ni `enviroment/phpenv/` entre máquinas. El setup genera credenciales nuevas y compila PHP para la arquitectura de destino usando siempre `ubuntu:22.04`, en lugar de elegir las bibliotecas de la versión local de Ubuntu o Debian. Comprueba la compatibilidad del host antes de instalar. La reparación puede instalar PHP y phpenv si faltan, pero el actualizador no sustituye la preparación inicial de Git, Docker y los servicios.
+
+Cada compilación conserva su salida en `enviroment/phpenv/logs/php-8.3.6.*/build.log` y los diagnósticos de php-build en ese mismo directorio, fuera del contenedor temporal. El log identifica el compilador, libxml2 y OpenSSL utilizados. Si falla, se indica la ruta local y se muestran los primeros errores del compilador. Estos archivos están ignorados por Git; revíselos antes de compartirlos. Para reducir el uso de memoria, configure `PHP_BUILD_JOBS=1` en la invocación; el valor predeterminado es 2 y debe ser un entero positivo.
+
+Después de actualizar los scripts en una estación donde falló la instalación, puede reparar solo PHP sin actualizar aplicaciones ni iniciar servicios:
+
+```bash
+PHP_BUILD_JOBS=1 bash ./enviroment/setup-phpenv.sh
+source ./enviroment/activate.sh
+php --version
+```
+
+No desinstale el PHP del sistema. La activación afecta únicamente a la terminal actual y debe hacerse después de que la instalación aislada termine correctamente.
 
 ## Aplicación Laravel ejecutada en el host
 

@@ -39,11 +39,11 @@ La configuración Compose raíz ejecuta únicamente servicios compartidos de res
 
 - WSL o Linux con Bash
 - Acceso a `sudo` y conectividad a Internet para una instalación automática inicial
-- Debian o Ubuntu para compilar PHP 8.3.6 con la imagen de la misma distribución
+- Ubuntu 22.04+ o Debian 12+, con glibc 2.35+ y arquitectura x86_64 o aarch64, para el PHP aislado de esta rama
 
 El mismo flujo `setup-local.sh` se ejecuta en WSL y Linux. En Debian o Ubuntu, instala Git, Docker Engine y el complemento Docker Compose que falten, y después inicia Docker Engine. Si las herramientas ya existen, las valida sin reinstalar nada.
 
-En esta rama, la compilación automática de PHP requiere Debian o Ubuntu. En otras distribuciones, el setup termina con un mensaje claro antes de descargar phpenv.
+En esta rama, PHP se compila con una base fija `ubuntu:22.04`, no con la versión de la estación. El setup comprueba la distribución, glibc y arquitectura antes de descargar phpenv y termina con un mensaje claro si no son compatibles. Esto evita que una estación más reciente introduzca bibliotecas o compiladores incompatibles con PHP 8.3.6.
 
 En Windows, instale primero una distribución WSL Debian o Ubuntu y ejecute la configuración dentro de ella. El script instala Docker Engine en esa distribución si falta; no utiliza un runtime de contenedores alojado en Windows. En esta rama también prepara PHP 8.3.6 con phpenv dentro de `enviroment/phpenv/`; no instala dependencias ni frameworks de aplicaciones.
 
@@ -69,6 +69,7 @@ local-infrastructure/
 │   └── timezone-handling.md
 ├── enviroment/
 │   ├── activate.sh
+│   ├── build-php.sh
 │   ├── check-phpenv.sh
 │   ├── copy-runtime-libraries.sh
 │   ├── php-build.Dockerfile
@@ -120,7 +121,9 @@ Cada repositorio se clona en `repositorios/<name>`. El script no instala depende
 
 ### PHP 8.3.6 en esta rama
 
-`setup-local.sh` instala phpenv, php-build y PHP 8.3.6 en `enviroment/phpenv/`. La carpeta está ignorada por Git. En Debian o Ubuntu compila PHP en un contenedor temporal con los paquetes de desarrollo y copia las bibliotecas de ejecución que falten al entorno local; no reemplaza el PHP del sistema, no instala esos paquetes en el host ni modifica la configuración global de Bash. La compilación inicial puede tardar varios minutos.
+`setup-local.sh` instala phpenv, php-build y PHP 8.3.6 en `enviroment/phpenv/`. La carpeta está ignorada por Git. Compila PHP en un contenedor temporal basado en `ubuntu:22.04`, para la arquitectura de la estación, y copia las bibliotecas de ejecución que falten al entorno local; no reemplaza el PHP del sistema, no instala paquetes de desarrollo en el host ni modifica la configuración global de Bash. La compilación inicial puede tardar varios minutos. El contexto de construcción excluye los runtimes, logs y demás archivos locales de `enviroment/`.
+
+La compilación utiliza dos procesos paralelos por defecto. En una estación con poca memoria, use `PHP_BUILD_JOBS=1 bash ./setup-local.sh` o `PHP_BUILD_JOBS=1 bash ./update-local.sh`. Los logs completos se conservan en `enviroment/phpenv/logs/php-8.3.6.*/`, incluso después de eliminar el contenedor. `build.log` contiene la salida y las versiones del compilador, libxml2 y OpenSSL; los archivos `php-build.*.log` conservan el diagnóstico del compilador. Ante un fallo, el script indica el directorio local y muestra los primeros errores encontrados. Revise esos logs antes de compartirlos.
 
 Para usar la versión de esta rama en una terminal, actívela explícitamente:
 
@@ -303,11 +306,11 @@ El script obtiene actualizaciones remotas y realiza avance rápido en los reposi
 
 Si utiliza servicios opcionales, repita las opciones correspondientes al actualizar: `bash ./update-local.sh --with-mysql --with-postgres --with-redis`. Para actualizar solo los repositorios sin iniciar servicios, use `--skip-services`. La actualización necesita el `.env` de infraestructura generado por `setup-local.sh`, salvo cuando se omiten los servicios.
 
-En esta rama, el script comprueba primero que el PHP aislado de `enviroment/phpenv/` funcione y sea exactamente 8.3.6. Si falta, no se puede ejecutar o tiene una versión incorrecta, intenta instalarlo o reconstruirlo mediante `enviroment/setup-phpenv.sh` y vuelve a comprobarlo antes de actualizar repositorios o servicios. Una instalación válida no se reinstala. La reparación requiere Git, Docker Engine accesible y Debian o Ubuntu, incluso con `--skip-services`; puede tardar varios minutos.
+En esta rama, el script comprueba primero que el PHP aislado de `enviroment/phpenv/` funcione y sea exactamente 8.3.6. Si falta, no se puede ejecutar o tiene una versión incorrecta, intenta instalarlo o reconstruirlo mediante `enviroment/setup-phpenv.sh` y vuelve a comprobarlo antes de actualizar repositorios o servicios. Una instalación válida no se reinstala. La reparación requiere Git, Docker Engine accesible y un sistema compatible con los requisitos de PHP indicados arriba, incluso con `--skip-services`; puede tardar varios minutos.
 
 Antes de reemplazar una instalación existente, se conserva un respaldo en `enviroment/phpenv/.php-8.3.6-backup.*/previous`. Si la reparación falla, se intenta restaurar ese respaldo y la actualización se detiene; cualquier instalación fallida se conserva en el mismo directorio de respaldo. Si tiene éxito, el respaldo anterior también se conserva. No modifica el PHP del sistema ni otras versiones de phpenv, y no instala dependencias de aplicaciones. La versión requerida sigue siendo 8.3.6; los repositorios de aplicaciones deben mantener requisitos compatibles. `--force` sigue afectando únicamente a la sincronización de repositorios y no es necesario para reparar PHP.
 
-En una estación de trabajo nueva, clone esta rama y ejecute primero `bash ./setup-local.sh` para preparar los requisitos y el entorno local. Después utilice `bash ./update-local.sh` para las actualizaciones. No copie `.env` ni `enviroment/phpenv/` de otra máquina: las credenciales se generan localmente y PHP se compila para la distribución de destino.
+En una estación de trabajo nueva, clone esta rama y ejecute primero `bash ./setup-local.sh` para preparar los requisitos y el entorno local. Después utilice `bash ./update-local.sh` para las actualizaciones. No copie `.env` ni `enviroment/phpenv/` de otra máquina: las credenciales se generan localmente y PHP se compila para la arquitectura de destino con la base controlada.
 
 Use `--force` únicamente cuando los cambios locales puedan descartarse. Restablece los repositorios afectados a su rama upstream y elimina archivos sin seguimiento:
 
@@ -411,6 +414,7 @@ Conecte el servicio de la aplicación a esa red. De esta forma podrá resolver l
 | El aprovisionamiento automático no está disponible | Use Debian o Ubuntu, o instale Git, Docker Engine, Docker Compose v2, `od` y `tr` antes de ejecutar la configuración en otra distribución de Linux. |
 | Un servicio no puede enlazar su puerto | Cambie la variable de puerto correspondiente en `.env` y ejecute `docker compose up -d`. |
 | Compose informa de una variable de entorno faltante | Ejecute `bash ./setup-local.sh` para crear `.env`, o restaure el valor local necesario sin confirmarlo en Git. |
+| Falla la compilación o reparación de PHP | Revise el directorio `enviroment/phpenv/logs/php-8.3.6.*` indicado por el script, especialmente `build.log` y `php-build.*.log`. Confirme glibc 2.35+ y una arquitectura compatible. Con poca memoria, reintente solo PHP con `PHP_BUILD_JOBS=1 bash ./enviroment/setup-phpenv.sh`; requiere Git y Docker disponibles y no actualiza repositorios ni inicia servicios. No desinstale el PHP del sistema. |
 | MinIO no inicia o no queda saludable | Revise `docker compose ps minio` y `docker compose logs minio`. Confirme que se usa `cgr.dev/chainguard/minio:latest`; ejecute de nuevo `bash ./setup-local.sh` o `bash ./update-local.sh` para aplicar la configuración actual sin borrar `minio_data`. |
 | Mongo Express espera a MongoDB | Ejecute `docker compose ps` y espere hasta que MongoDB esté saludable. Inspeccione `docker compose logs mongo` si no llega a estar saludable. |
 | MySQL no acepta conexiones | Inicie la pila con ambos archivos Compose, compruebe su salud con `docker compose -f docker-compose.yml -f docker-compose.mysql.yml ps` y revise que el puerto de `.env` esté disponible. No cambie las credenciales sin restablecer también el volumen de MySQL. |
