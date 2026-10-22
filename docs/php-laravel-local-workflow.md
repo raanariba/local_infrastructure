@@ -16,6 +16,14 @@ Desde la raíz de `local-infrastructure`, ejecute una sola vez `bash ./setup-loc
 
 Clone cada aplicación en `repositorios/<nombre>` según su propia documentación. La infraestructura no instala sus dependencias ni comparte automáticamente las contraseñas de su `.env` con la aplicación.
 
+### Comprobación y reparación de PHP al actualizar
+
+`bash ./update-local.sh` comprueba primero el ejecutable de PHP aislado y su versión exacta, 8.3.6. Si la comprobación falla, reutiliza `enviroment/setup-phpenv.sh` para instalarlo o reconstruirlo, y solo continúa con los repositorios y servicios después de validarlo de nuevo. No reinstala una versión correcta ni cambia el PHP del sistema u otras versiones de phpenv.
+
+La reparación necesita Git, Docker Engine accesible y Debian o Ubuntu; `--skip-services` omite el inicio de servicios, no esta comprobación ni la reparación. Antes de sustituir una instalación existente, la mueve a `enviroment/phpenv/.php-8.3.6-backup.*/previous`. Conserva ese respaldo después de una reparación correcta. Si falla, intenta restaurarlo, conserva la instalación fallida en ese mismo directorio de respaldo cuando exista y detiene la actualización antes de modificar repositorios o servicios. No use `--force` para reparar PHP: esa opción descarta cambios de los repositorios.
+
+En otra estación de trabajo, clone esta rama y ejecute primero `bash ./setup-local.sh`; después use `bash ./update-local.sh`. No traslade `.env` ni `enviroment/phpenv/` entre máquinas. El setup genera credenciales nuevas y compila PHP para la distribución de destino. La reparación puede instalar PHP y phpenv si faltan, pero el actualizador no sustituye la preparación inicial de Git, Docker y los servicios.
+
 ## Aplicación Laravel ejecutada en el host
 
 Este ejemplo se aplica **solo después de confirmar la compatibilidad** de la aplicación con PHP 8.3.6 y sus dependencias. Ejecútelo desde la raíz de la infraestructura:

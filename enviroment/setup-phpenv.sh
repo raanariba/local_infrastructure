@@ -4,12 +4,36 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PHPENV_ROOT="${ROOT_DIR}/enviroment/phpenv"
 PHP_VERSION="8.3.6"
+PHP_INSTALL_DIR="${PHPENV_ROOT}/versions/${PHP_VERSION}"
+PHP_BACKUP_DIR=''
 PHPENV_REPOSITORY="https://github.com/phpenv/phpenv.git"
 PHP_BUILD_REPOSITORY="https://github.com/php-build/php-build.git"
 
 die() {
   printf 'Error: %s\n' "$*" >&2
   exit 1
+}
+
+restore_previous_php() {
+  local status="$?"
+  trap - EXIT
+
+  if [ "${status}" -ne 0 ] && { [ -e "${PHP_BACKUP_DIR}/previous" ] || [ -L "${PHP_BACKUP_DIR}/previous" ]; }; then
+    if [ -e "${PHP_INSTALL_DIR}" ] || [ -L "${PHP_INSTALL_DIR}" ]; then
+      if ! mv -- "${PHP_INSTALL_DIR}" "${PHP_BACKUP_DIR}/failed"; then
+        printf 'Error: cannot move the failed PHP installation. The previous installation is preserved at %s\n' "${PHP_BACKUP_DIR}/previous" >&2
+        exit "${status}"
+      fi
+    fi
+
+    if mv -- "${PHP_BACKUP_DIR}/previous" "${PHP_INSTALL_DIR}"; then
+      printf 'PHP repair failed; the previous installation was restored to %s\n' "${PHP_INSTALL_DIR}" >&2
+    else
+      printf 'Error: cannot restore PHP automatically. The previous installation is preserved at %s\n' "${PHP_BACKUP_DIR}/previous" >&2
+    fi
+  fi
+
+  exit "${status}"
 }
 
 select_build_image() {
@@ -106,9 +130,19 @@ fi
 export PHPENV_ROOT PHPENV_VERSION="${PHP_VERSION}"
 export PATH="${PHPENV_ROOT}/shims:${PHPENV_ROOT}/bin:${PATH}"
 
-if [ ! -x "${PHPENV_ROOT}/versions/${PHP_VERSION}/bin/php" ]; then
-  printf 'Building PHP %s in %s\n' "${PHP_VERSION}" "${PHPENV_ROOT}"
+if ! bash "${ROOT_DIR}/enviroment/check-phpenv.sh" >/dev/null 2>&1; then
   ensure_build_image
+
+  if [ -e "${PHP_INSTALL_DIR}" ] || [ -L "${PHP_INSTALL_DIR}" ]; then
+    PHP_BACKUP_DIR="$(mktemp -d "${PHPENV_ROOT}/.php-${PHP_VERSION}-backup.XXXXXX")"
+    trap restore_previous_php EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    mv -- "${PHP_INSTALL_DIR}" "${PHP_BACKUP_DIR}/previous"
+    printf 'Previous PHP installation backed up to %s\n' "${PHP_BACKUP_DIR}/previous"
+  fi
+
+  printf 'Building PHP %s in %s\n' "${PHP_VERSION}" "${PHPENV_ROOT}"
   "${DOCKER_COMMAND[@]}" run --rm \
     --user "$(id -u):$(id -g)" \
     --env "HOME=/tmp" \
@@ -124,3 +158,6 @@ install_missing_runtime_libraries
 phpenv rehash
 bash "${ROOT_DIR}/enviroment/check-phpenv.sh"
 printf 'PHP %s is ready in %s\n' "${PHP_VERSION}" "${PHPENV_ROOT}"
+if [ -n "${PHP_BACKUP_DIR}" ]; then
+  printf 'Previous PHP installation preserved at %s\n' "${PHP_BACKUP_DIR}/previous"
+fi

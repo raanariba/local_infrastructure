@@ -80,6 +80,27 @@ print_list() {
   printf ' - %s\n' "$@"
 }
 
+ensure_php_runtime() {
+  log_step "Checking isolated PHP runtime"
+  if bash "${ROOT_DIR}/enviroment/check-phpenv.sh"; then
+    log_success "The required PHP runtime is ready."
+    return 0
+  fi
+
+  log_warn "PHP is missing, unusable, or has the wrong version. Attempting automatic repair."
+  if ! bash "${ROOT_DIR}/enviroment/setup-phpenv.sh"; then
+    log_error "PHP repair failed. Application repositories and shared services were not updated."
+    return 1
+  fi
+
+  if ! bash "${ROOT_DIR}/enviroment/check-phpenv.sh"; then
+    log_error "PHP verification failed after repair. Application repositories and shared services were not updated."
+    return 1
+  fi
+
+  log_success "The required PHP runtime was repaired and verified."
+}
+
 select_docker_command() {
   if docker info >/dev/null 2>&1; then
     DOCKER_COMMAND=(docker)
@@ -278,7 +299,7 @@ parse_arguments() {
 
 parse_arguments "$@"
 
-bash "${ROOT_DIR}/enviroment/check-phpenv.sh"
+ensure_php_runtime
 
 command -v git >/dev/null 2>&1 || {
   log_error "git is required but was not found."

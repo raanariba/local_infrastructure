@@ -303,7 +303,11 @@ The script fetches remote updates and fast-forwards repositories with a configur
 
 If you use optional services, repeat their flags when updating: `bash ./update-local.sh --with-mysql --with-postgres --with-redis`. Use `--skip-services` to update repositories without starting services. Unless services are skipped, the update needs the infrastructure `.env` created by `setup-local.sh`.
 
-On this branch, it first checks that PHP 8.3.6 is installed under `enviroment/phpenv/`. It does not change that version; application repositories still advance according to their upstream and must retain compatible PHP requirements.
+On this branch, it first checks that the isolated PHP under `enviroment/phpenv/` runs and is exactly 8.3.6. If it is missing, cannot run, or has the wrong version, it attempts to install or rebuild it through `enviroment/setup-phpenv.sh`, then checks it again before updating repositories or services. A valid installation is not reinstalled. Repair requires Git, accessible Docker Engine, and Debian or Ubuntu, even with `--skip-services`; it can take several minutes.
+
+Before replacing an existing installation, it preserves a backup under `enviroment/phpenv/.php-8.3.6-backup.*/previous`. If repair fails, it attempts to restore that backup and stops the update; any failed installation is retained in the same backup directory. On success, the previous backup is retained as well. It does not modify system PHP or other phpenv versions, nor install application dependencies. The required version remains 8.3.6; application repositories must retain compatible requirements. `--force` still affects only repository synchronization and is not needed to repair PHP.
+
+On a new workstation, clone this branch and run `bash ./setup-local.sh` first to prepare the prerequisites and local environment. Use `bash ./update-local.sh` for subsequent updates. Do not copy `.env` or `enviroment/phpenv/` from another machine: credentials are generated locally and PHP is built for the target distribution.
 
 Use `--force` only when local changes may be discarded. It resets affected repositories to their upstream branch and removes untracked files:
 

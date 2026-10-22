@@ -303,7 +303,11 @@ El script obtiene actualizaciones remotas y realiza avance rápido en los reposi
 
 Si utiliza servicios opcionales, repita las opciones correspondientes al actualizar: `bash ./update-local.sh --with-mysql --with-postgres --with-redis`. Para actualizar solo los repositorios sin iniciar servicios, use `--skip-services`. La actualización necesita el `.env` de infraestructura generado por `setup-local.sh`, salvo cuando se omiten los servicios.
 
-En esta rama, el script comprueba primero que PHP 8.3.6 esté instalado en `enviroment/phpenv/`. No cambia esa versión; los repositorios de aplicaciones siguen avanzando según su upstream y deben mantener requisitos de PHP compatibles.
+En esta rama, el script comprueba primero que el PHP aislado de `enviroment/phpenv/` funcione y sea exactamente 8.3.6. Si falta, no se puede ejecutar o tiene una versión incorrecta, intenta instalarlo o reconstruirlo mediante `enviroment/setup-phpenv.sh` y vuelve a comprobarlo antes de actualizar repositorios o servicios. Una instalación válida no se reinstala. La reparación requiere Git, Docker Engine accesible y Debian o Ubuntu, incluso con `--skip-services`; puede tardar varios minutos.
+
+Antes de reemplazar una instalación existente, se conserva un respaldo en `enviroment/phpenv/.php-8.3.6-backup.*/previous`. Si la reparación falla, se intenta restaurar ese respaldo y la actualización se detiene; cualquier instalación fallida se conserva en el mismo directorio de respaldo. Si tiene éxito, el respaldo anterior también se conserva. No modifica el PHP del sistema ni otras versiones de phpenv, y no instala dependencias de aplicaciones. La versión requerida sigue siendo 8.3.6; los repositorios de aplicaciones deben mantener requisitos compatibles. `--force` sigue afectando únicamente a la sincronización de repositorios y no es necesario para reparar PHP.
+
+En una estación de trabajo nueva, clone esta rama y ejecute primero `bash ./setup-local.sh` para preparar los requisitos y el entorno local. Después utilice `bash ./update-local.sh` para las actualizaciones. No copie `.env` ni `enviroment/phpenv/` de otra máquina: las credenciales se generan localmente y PHP se compila para la distribución de destino.
 
 Use `--force` únicamente cuando los cambios locales puedan descartarse. Restablece los repositorios afectados a su rama upstream y elimina archivos sin seguimiento:
 
